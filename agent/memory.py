@@ -48,6 +48,8 @@ def build_context(state: dict, messages: list) -> str:
 
 === TRẠNG THÁI HIỆN TẠI ===
 Lead stage: {state['lead_stage']}
+Channel ID: {state.get('channel_id') or 'null (chưa kết nối với seller)'}
+Seller: {state['participants'].get('seller_name') or 'chưa xác định'}
 Constraints (buyer): {state['constraints']}
 Listing đang xem xét: {state['listing_context']}
 Risks: {state['risks']}

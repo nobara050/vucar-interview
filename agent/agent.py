@@ -7,6 +7,7 @@ from agent.extractor import extract_facts
 from agent.decision import decide_tools
 from agent.replier import generate_reply
 from agent.executor import execute_tool_calls
+from agent.feedback import auto_detect_outcome, save_feedback
 from agent.logger import log_event
 
 
@@ -101,6 +102,20 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
         tool_results = execute_tool_calls(conversation_id, decision["tool_calls"], state)
         add_step("Tool Results", {"results": tool_results})
 
+        # Gán channel_id + seller vào state nếu create_chat_bridge thành công
+        for result in tool_results:
+            if result["tool"] == "create_chat_bridge" and result["result"].get("channel_id"):
+                r = result["result"]
+                state["channel_id"] = r["channel_id"]
+                if not state["participants"]["seller_id"]:
+                    state["participants"]["seller_id"] = r.get("seller_id")
+                    state["participants"]["seller_name"] = r.get("seller_name")
+                log_event(conversation_id, "HANDOFF", {"channel_id": r["channel_id"]})
+                add_step("Channel Created", {
+                    "channel_id": r["channel_id"],
+                    "seller": r.get("seller_name")
+                })
+
     # =========================
     # 8. Update next best action
     # =========================
@@ -112,6 +127,7 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
     # 9. Handle escalation
     # =========================
     if decision.get("escalate"):
+        state["lead_stage"] = "DROPPED"
         log_event(conversation_id, "ESCALATION", {"reason": decision.get("escalate_reason", "")})
         add_step("Escalation Triggered", {"reason": decision.get("escalate_reason", "")})
 
@@ -128,7 +144,16 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
         add_step("Skip Reply", {"reason": "sender là seller, agent không reply"})
 
     # =========================
-    # 11. Save state
+    # 11. Auto detect outcome + Save feedback nếu xác định được
+    # =========================
+    outcome = auto_detect_outcome(state, state.get("tool_history", []))
+    if outcome:
+        save_feedback(conversation_id, outcome, state)
+        log_event(conversation_id, "FEEDBACK", {"outcome": outcome, "auto_detected": True})
+        add_step("Auto Feedback", {"outcome": outcome})
+
+    # =========================
+    # 12. Save state
     # =========================
     save_state(state)
     log_event(conversation_id, "AGENT_ACTION", {"reply": reply})

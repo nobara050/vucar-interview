@@ -12,27 +12,25 @@ class SearchListingsTool(BaseTool):
         return "search_listings"
 
     def run(self, **kwargs) -> dict:
-        price_max = kwargs.get("price_max") or kwargs.get("budget_max")
-        price_min = kwargs.get("price_min") or kwargs.get("budget_min")
-        brands = kwargs.get("brands") or ([kwargs.get("brand")] if kwargs.get("brand") else None)
-        year_from = kwargs.get("year_from")
-        location = kwargs.get("location")
-        odo_max = kwargs.get("odo_max")
+        keywords = kwargs.get("keywords") or []
+        brands = kwargs.get("brands") or ([kwargs.get("brand")] if kwargs.get("brand") else [])
 
         results = LISTINGS.copy()
 
-        if price_max:
-            results = [l for l in results if l["price"] <= price_max]
-        if price_min:
-            results = [l for l in results if l["price"] >= price_min]
+        # Filter theo brand nếu có
         if brands:
-            brands_lower = [b.lower() for b in brands]
-            results = [l for l in results if l["brand"].lower() in brands_lower]
-        if year_from:
-            results = [l for l in results if l["year"] >= year_from]
-        if location:
-            results = [l for l in results if l["location"].upper() == location.upper()]
-        if odo_max:
-            results = [l for l in results if l["odo"] <= odo_max]
+            brands_lower = [b.lower() for b in brands if b]
+            results = [
+                l for l in results
+                if any(b in l["name"].lower() for b in brands_lower)
+            ]
 
-        return {"listings": results}
+        # Filter theo keywords nếu có
+        if keywords:
+            keywords_lower = [k.lower() for k in keywords if k]
+            results = [
+                l for l in results
+                if any(k in l["name"].lower() for k in keywords_lower)
+            ]
+
+        return {"listings": results, "total": len(results)}

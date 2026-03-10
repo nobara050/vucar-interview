@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from agent.feedback import save_feedback, load_feedback
 from datetime import datetime, timezone
 
 import config
@@ -28,7 +29,6 @@ class MessageRequest(BaseModel):
     sender: str  # "buyer" | "seller"
     text: str
     buyer_id: str = "B001"
-    seller_id: str = "S001" 
 
 
 class MessageResponse(BaseModel):
@@ -48,22 +48,18 @@ async def receive_message(req: MessageRequest):
         "text": req.text,
         "index": len(conversation_messages[req.conversation_id]) + 1,
         "buyer_id": req.buyer_id,
-        "seller_id": req.seller_id
     }
 
-    # Gán participants vào state trước khi xử lý
+    # Gán buyer vào state khi có message thật lần đầu
+    # Seller được gán sau khi create_chat_bridge thành công, không gán từ request
     from agent.state import load_state, save_state
-    from data.mock_data import get_buyer, get_seller
+    from data.mock_data import get_buyer
     state = load_state(req.conversation_id)
-    if not state["participants"]["buyer_id"]:
+    if not state["participants"]["buyer_id"] and req.buyer_id:
         buyer = get_buyer(req.buyer_id)
         state["participants"]["buyer_id"] = req.buyer_id
         state["participants"]["buyer_name"] = buyer["name"] if buyer else None
-    if not state["participants"]["seller_id"]:
-        seller = get_seller(req.seller_id)
-        state["participants"]["seller_id"] = req.seller_id
-        state["participants"]["seller_name"] = seller["name"] if seller else None
-    save_state(state)
+        save_state(state)
 
     reply, debug_steps = process_message(
         conversation_id=req.conversation_id,
@@ -124,3 +120,78 @@ async def reset_conversation(conversation_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+class DemoBridgeRequest(BaseModel):
+    conversation_id: str
+    buyer_id: str = "B001"
+    seller_id: str = "S001"
+    listing_id: str = "L001"
+
+
+@app.post("/demo-bridge")
+async def demo_bridge(req: DemoBridgeRequest):
+    from agent.state import load_state, save_state
+    from agent.tools import call_tool
+    from data.mock_data import get_buyer
+
+    state = load_state(req.conversation_id)
+
+    if not state["participants"]["buyer_id"]:
+        buyer = get_buyer(req.buyer_id)
+        state["participants"]["buyer_id"] = req.buyer_id
+        state["participants"]["buyer_name"] = buyer["name"] if buyer else None
+
+    result = call_tool("create_chat_bridge", {
+        "buyer_id": req.buyer_id,
+        "listing_id": req.listing_id,
+        "seller_id": req.seller_id
+    })
+
+    if result.get("channel_id"):
+        state["channel_id"] = result["channel_id"]
+        state["participants"]["seller_id"] = result.get("seller_id")
+        state["participants"]["seller_name"] = result.get("seller_name")
+        state["lead_stage"] = "CLOSING"
+        save_state(state)
+
+    return {
+        "status": "ok",
+        "channel_id": result.get("channel_id"),
+        "seller_name": result.get("seller_name")
+    }
+
+
+class FeedbackRequest(BaseModel):
+    conversation_id: str
+    outcome: str  # "booked" | "closed" | "dropped" | "escalated" | "connected"
+    notes: str = ""
+
+
+@app.post("/feedback")
+async def submit_feedback(req: FeedbackRequest):
+    from agent.state import load_state
+    state = load_state(req.conversation_id)
+    save_feedback(req.conversation_id, req.outcome, state, req.notes)
+    return {"status": "saved", "outcome": req.outcome}
+
+
+@app.get("/feedback/summary")
+async def feedback_summary():
+    entries = load_feedback()
+    if not entries:
+        return {"total": 0, "outcomes": {}}
+
+    outcomes = {}
+    for e in entries:
+        o = e.get("outcome", "unknown")
+        outcomes[o] = outcomes.get(o, 0) + 1
+
+    total = len(entries)
+    return {
+        "total": total,
+        "outcomes": outcomes,
+        "booking_rate": round(outcomes.get("booked", 0) / total * 100, 1),
+        "close_rate": round(outcomes.get("closed", 0) / total * 100, 1),
+        "drop_rate": round(outcomes.get("dropped", 0) / total * 100, 1),
+    }

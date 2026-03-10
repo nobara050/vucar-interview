@@ -2,6 +2,7 @@ from agent.tools.search import SearchListingsTool
 from agent.tools.listing import GetListingDetailTool
 from agent.tools.bridge import CreateChatBridgeTool
 from agent.tools.appointment import BookAppointmentTool
+from agent.tools.escalate import EscalateToHumanTool
 
 TOOL_REGISTRY: dict = {
     tool.name: tool
@@ -10,6 +11,7 @@ TOOL_REGISTRY: dict = {
         GetListingDetailTool(),
         CreateChatBridgeTool(),
         BookAppointmentTool(),
+        EscalateToHumanTool(),
     ]
 }
 

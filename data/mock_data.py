@@ -11,50 +11,10 @@ SELLERS = [
 ]
 
 LISTINGS = [
-    {
-        "listing_id": "L001",
-        "seller_id": "S001",
-        "name": "Honda Air Blade 2021",
-        "brand": "Honda",
-        "year": 2021,
-        "price": 32000000,
-        "odo": 19000,
-        "location": "HCM",
-        "document_status": "ok"
-    },
-    {
-        "listing_id": "L002",
-        "seller_id": "S001",
-        "name": "Honda Vision 2020",
-        "brand": "Honda",
-        "year": 2020,
-        "price": 22000000,
-        "odo": 25000,
-        "location": "HCM",
-        "document_status": "pending"
-    },
-    {
-        "listing_id": "L003",
-        "seller_id": "S002",
-        "name": "Yamaha Freego 2022",
-        "brand": "Yamaha",
-        "year": 2022,
-        "price": 25500000,
-        "odo": 10000,
-        "location": "HCM",
-        "document_status": "ok"
-    },
-    {
-        "listing_id": "L004",
-        "seller_id": "S002",
-        "name": "Yamaha NVX 2021",
-        "brand": "Yamaha",
-        "year": 2021,
-        "price": 26000000,
-        "odo": 18000,
-        "location": "HCM",
-        "document_status": "ok"
-    },
+    {"listing_id": "L001", "seller_id": "S001", "name": "Honda Air Blade 2021"},
+    {"listing_id": "L002", "seller_id": "S001", "name": "Honda Vision 2020"},
+    {"listing_id": "L003", "seller_id": "S002", "name": "Yamaha Freego 2022"},
+    {"listing_id": "L004", "seller_id": "S002", "name": "Yamaha NVX 2021"},
 ]
 
 
