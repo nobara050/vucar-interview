@@ -358,20 +358,23 @@ Lỗi là agent trả lời chung chung thay vì giải thích giá trị platfo
 
 ### Feedback loop
 
-Signal tự động từ log:
+Hệ thống cải thiện qua vòng lặp human-in-the-loop: thu thập outcome thật, phân tích pattern, apply cải thiện vào prompt, chạy lại eval để confirm.
 
-```
-book_appointment thành công   → outcome = "booked"
-create_chat_bridge thành công → outcome = "connected"
-escalate_to_human gọi         → outcome = "escalated"
-lead_stage = DROPPED          → outcome = "dropped"
-```
+**1. Thu thập outcome signals**
 
-Signal thủ công từ UI: buyer bấm nút "Deal thành công", "Đã đặt lịch", "Buyer bỏ qua", "Cần hỗ trợ".
+Mỗi conversation kết thúc với một trong các outcome: `booked`, `closed`, `connected`, `dropped`, `escalated`. Signal đến từ 2 nguồn — auto-detect từ tool history (ví dụ `book_appointment` thành công → `booked`), và manual từ nút bấm trên UI khi human xác nhận kết quả thật.
 
-Mỗi conversation chỉ có một entry trong `data/feedback.jsonl`, update thay vì append khi có signal mới.
+**2. Lưu đủ context để phân tích**
 
-Quy trình cải thiện: định kỳ chạy LLM analyzer so sánh conversations thành công và thất bại → LLM đề xuất rule mới → human review → apply vào prompt thủ công → test lại trên log cũ → deploy. Đây là prompt engineering loop, không phải model training — Gemini model weights cố định, cải thiện qua prompt và few-shot examples.
+Mỗi entry trong `feedback.jsonl` lưu `(conversation_id, outcome, lead_stage, last_action, risks, constraints_filled, channel_id)`. Kết hợp với event log trong `data/logs/`, đủ để reconstruct lại toàn bộ quyết định agent đã đưa ra trong conversation đó.
+
+**3. Dùng data để cải thiện**
+
+\- **Few-shot examples:** so sánh conversations `dropped` vs `booked` để tìm phrase tiếng Việt nào agent đang hiểu sai — thêm vào `extract_facts.txt` để extraction nhận diện đúng hơn.
+
+\- **Tool routing:** tìm pattern trong conversations thất bại — ví dụ agent gọi `search_listings` thay vì `NEGOTIATE` khi có price gap — sửa rule trong `decide_tools.txt`.
+
+\- **Extraction và state:** nếu `constraints_filled` thấp sau nhiều turns, extraction đang bỏ sót thông tin buyer cung cấp — review lại prompt và thêm examples cho các case bị miss.
 
 ---
 
