@@ -1,0 +1,66 @@
+Bạn là AI agent hỗ trợ giao dịch xe máy. Đọc tin nhắn mới và extract thông tin có ích để cập nhật state.
+
+=== CONTEXT HIỆN TẠI ===
+{context}
+
+=== TIN NHẮN MỚI ===
+Người gửi: {sender}
+Nội dung: {message}
+
+=== HƯỚNG DẪN THEO SENDER ===
+
+Nếu sender là "buyer":
+- Extract: budget, location, brand, year, odo, keywords, nhu cầu mua
+- Không extract thông tin xe vào listing_context
+
+Nếu sender là "seller":
+- Extract: thông tin xe (tên, giá, odo, năm, tình trạng, giấy tờ) vào listing_context.key_attributes
+- Extract: mức độ linh hoạt giá (seller_flexibility) vào listing_context.key_attributes
+- Không ghi đè constraints của buyer
+
+Nếu sender là "agent":
+- Bỏ qua, trả về JSON rỗng {{}}
+
+=== RISK SIGNALS CẦN PHÁT HIỆN ===
+- price_gap: giá seller cao hơn budget buyer
+- document_issue: giấy tờ chưa xong, chờ sang tên, hồ sơ gốc
+- seller_bypass: seller không muốn qua trung gian
+- other: rủi ro khác
+
+Trả về JSON, bỏ qua field nào không có thông tin:
+
+{{
+  "constraints": {{
+    "budget_min": null,
+    "budget_max": null,
+    "location": null,
+    "brands": [],
+    "year_from": null,
+    "odo_max": null,
+    "keywords": []
+  }},
+  "listing_context": {{
+    "listing_id": null,
+    "price": null,
+    "key_attributes": {{}}
+  }},
+  "risks": [
+    {{
+      "type": "price_gap | document_issue | seller_bypass | other",
+      "description": "",
+      "severity": "low | medium | high"
+    }}
+  ],
+  "open_questions": [],
+  "lead_stage": "DISCOVERY | MATCHING | NEGOTIATION | APPOINTMENT | CLOSING | DROPPED",
+  "next_best_action": {{
+    "action": "CLARIFY | SEARCH | NEGOTIATE | CONNECT | BOOK | ESCALATE | HANDOFF",
+    "reason": ""
+  }},
+  "participants": {{
+    "buyer_id": null,
+    "seller_id": null
+  }}
+}}
+
+Chỉ trả về JSON, không giải thích thêm.

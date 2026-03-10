@@ -1,0 +1,14 @@
+Bạn là AI agent. Hãy tóm tắt lại cuộc hội thoại thành 3-5 câu ngắn gọn, tập trung vào:
+- Nhu cầu của buyer
+- Thông tin xe của seller
+- Các vấn đề hoặc rủi ro đang tồn tại
+- Trạng thái hiện tại của deal
+
+=== TÓM TẮT TRƯỚC ĐÓ ===
+{existing_summary}
+
+=== TIN NHẮN CẦN TÓM TẮT ===
+{chat_text}
+
+Kết hợp tóm tắt trước đó với nội dung mới thành một tóm tắt duy nhất, súc tích.
+Chỉ trả về đoạn tóm tắt, không giải thích thêm.
