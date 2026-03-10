@@ -4,13 +4,16 @@ from agent.llm import llm_client
 from agent.prompt_loader import load_prompt
 
 
-# ==========================
-# Định nghĩa tool schemas
-# dùng cho Gemini native function calling
-# ==========================
+# =============================================================================
+# =========================== TOOL DECLARATIONS ===============================
+# =============================================================================
+
 TOOL_DECLARATIONS = [
     genai.protos.Tool(
         function_declarations=[
+            
+            # HÀM SEARCH_LISTINGS: Tìm xe máy theo tiêu chí của buyer, 
+            # trả về list các xe phù hợp với thông tin cơ bản (ID, tên xe, giá, vị trí)
             genai.protos.FunctionDeclaration(
                 name="search_listings",
                 description="Tìm xe máy theo tiêu chí của buyer",
@@ -30,6 +33,9 @@ TOOL_DECLARATIONS = [
                     }
                 )
             ),
+
+            # HÀM GET_LISTING_DETAIL: Lấy thông tin chi tiết một xe cụ thể khi buyer quan tâm, 
+            # bao gồm mô tả, hình ảnh, thông số kỹ thuật, lịch sử bảo dưỡng, v.v.
             genai.protos.FunctionDeclaration(
                 name="get_listing_detail",
                 description="Lấy thông tin chi tiết một xe cụ thể",
@@ -41,6 +47,9 @@ TOOL_DECLARATIONS = [
                     required=["listing_id"]
                 )
             ),
+
+            # HÀM CREATE_CHAT_BRIDGE: Chính thức kết nối buyer và seller sau khi buyer đồng ý tiến tới, 
+            # tạo một channel chat riêng giữa hai bên để trao đổi thông tin chi tiết và thương lượng.
             genai.protos.FunctionDeclaration(
                 name="create_chat_bridge",
                 description="Chính thức kết nối buyer và seller sau khi buyer đồng ý tiến tới",
@@ -54,6 +63,9 @@ TOOL_DECLARATIONS = [
                     required=["buyer_id", "listing_id"]
                 )
             ),
+
+            # HÀM BOOK_APPOINTMENT: Đặt lịch hẹn xem xe giữa buyer và seller, 
+            # sau khi hai bên đã trao đổi và thống nhất về việc tiến tới xem xe.
             genai.protos.FunctionDeclaration(
                 name="book_appointment",
                 description="Đặt lịch hẹn xem xe giữa buyer và seller",
@@ -67,6 +79,9 @@ TOOL_DECLARATIONS = [
                     required=["channel_id", "time", "place"]
                 )
             ),
+
+            # HÀM ESCALATE_TO_HUMAN: Chuyển conversation cho nhân viên hỗ trợ khi có rủi ro nghiêm trọng 
+            # hoặc conflict không giải quyết được
             genai.protos.FunctionDeclaration(
                 name="escalate_to_human",
                 description="Chuyển conversation cho nhân viên hỗ trợ khi có rủi ro nghiêm trọng hoặc conflict không giải quyết được",
@@ -84,25 +99,27 @@ TOOL_DECLARATIONS = [
 ]
 
 
+# =============================================================================
+# ========================= DECISION FUNCTION =================================
+# =============================================================================
+
 def decide_tools(state: dict, context: str) -> tuple[dict, str]:
-    """
-    LLM call 1: Dùng Gemini native function calling để quyết định
-    tool nào cần gọi và next_best_action.
-    Chưa sinh reply, chỉ quyết định action.
-    """
+    # Load prompt template và format với context + state (chuyển state thành JSON string để dễ đọc)
     prompt_template = load_prompt("decide_tools.txt")
     prompt = prompt_template.format(
         context=context,
         state=json.dumps(state, ensure_ascii=False, indent=2)
     )
 
+    # Gọi LLM với prompt và tool declarations, nhận về text và tool_calls
     result = llm_client.generate_with_tools(prompt, TOOL_DECLARATIONS)
 
-    # Parse next_best_action từ text nếu có
+    # Khởi tạo giá trị mặc định cho next_best_action và escalate
     next_best_action = {"action": "CLARIFY", "reason": ""}
     escalate = False
     escalate_reason = ""
 
+    # Nếu LLM trả về text, cố gắng parse next_best_action và escalate
     if result.get("text"):
         text = result["text"]
         # LLM có thể trả về next_best_action trong text

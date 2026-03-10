@@ -3,6 +3,11 @@ import os
 from datetime import datetime, timezone
 import config
 
+# Module logger: log tất cả các sự kiện liên quan đến cuộc trò chuyện, bao gồm
+
+# =============================================================================
+# =========================== LOGGING UTILS ===================================
+# =============================================================================
 
 def log_event(conversation_id: str, event_type: str, detail: dict):
     os.makedirs(config.LOGS_DIR, exist_ok=True)

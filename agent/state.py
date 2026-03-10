@@ -3,6 +3,12 @@ import os
 from datetime import datetime, timezone
 import config
 
+# State module: Xử lý trạng thái của cuộc hội thoại, bao gồm tạo mới, lưu trữ, tải và cập nhật 
+# trạng thái dựa trên thông tin trích xuất được từ các công cụ và phản hồi của người dùng. 
+
+# =============================================================================
+# =========================  STATE STRUCTURE ==================================
+# =============================================================================
 
 def create_initial_state(conversation_id: str) -> dict:
     return {
@@ -44,6 +50,9 @@ def create_initial_state(conversation_id: str) -> dict:
         }
     }
 
+# =============================================================================
+# =========================  STATE MANAGEMENT =================================
+# =============================================================================
 
 def load_state(conversation_id: str) -> dict:
     path = os.path.join(config.STATES_DIR, f"{conversation_id}.json")

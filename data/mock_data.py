@@ -1,13 +1,11 @@
 BUYERS = [
-    {"buyer_id": "B001", "name": "Nguyễn Văn A"},
-    {"buyer_id": "B002", "name": "Nguyễn Văn B"},
-    {"buyer_id": "B003", "name": "Nguyễn Văn C"},
+    {"buyer_id": "B001", "name": "Nguyễn Tiến Đạt"},
 ]
 
 SELLERS = [
-    {"seller_id": "S001", "name": "Nguyễn Văn D"},
-    {"seller_id": "S002", "name": "Nguyễn Văn E"},
-    {"seller_id": "S003", "name": "Nguyễn Văn F"},  # không có xe
+    {"seller_id": "S001", "name": "Nguyễn Văn A"},
+    {"seller_id": "S002", "name": "Nguyễn Văn B"},
+    {"seller_id": "S003", "name": "Nguyễn Văn C"}, 
 ]
 
 LISTINGS = [
