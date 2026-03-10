@@ -5,7 +5,7 @@
 
 ## Mục lục
 
-1. [Hiểu vấn đề](#1-hiểu-vấn-đề)
+1. [Tìm hiểu bài toán](#1-tìm-hiểu-bài-toán)
 2. [Architecture và flow](#2-architecture-và-flow)
 3. [Key design decisions và trade-offs](#3-key-design-decisions-và-trade-offs)
 4. [Failure modes](#4-failure-modes)
@@ -17,21 +17,23 @@
 
 ---
 
-## 1. Hiểu vấn đề
+## 1. Tìm hiểu bài toán
 
-Marketplace mua bán xe máy có một vấn đề cơ bản: buyer và seller thường không đi đến được thỏa thuận, không phải vì xe không phù hợp, mà vì thiếu người điều phối. Giá chênh nhau một chút là bỏ cuộc, giấy tờ có vấn đề nhỏ là sợ, seller không muốn qua trung gian là tự liên hệ rồi mất dấu.
+Việc mua bán xe máy online có một vấn đề cơ bản: buyer và seller thường không đi đến được thỏa thuận, không phải vì xe không phù hợp, mà vì thiếu người điều phối.
 
-Agent trong project này đóng vai trò trung gian thông minh — không chỉ chuyển tin nhắn mà còn chủ động xử lý các điểm friction đó trước khi hai bên mất kiên nhẫn.
+Giá chênh nhau một chút là bỏ cuộc, giấy tờ có vấn đề nhỏ là sợ, seller không muốn qua trung gian là tự liên hệ rồi mất dấu.
+
+Agent trong project này đóng vai trò trung gian — không chỉ chuyển tin nhắn mà còn chủ động điều hướng hai bên đi đến thỏa thuận.
 
 Ba tình huống điển hình từ data mẫu:
 
-**c1 — Price gap:** Seller muốn 32tr, buyer có tối đa 26tr. Không có ai điều phối thì conversation kết thúc trong im lặng. Agent cần giữ hai bên ở lại và tìm điểm chung trước khi bỏ cuộc.
+- **c1 — Price gap:** Seller muốn 32tr, buyer có tối đa 26tr. Không có ai điều phối thì conversation kết thúc trong im lặng. Agent cần giữ hai bên ở lại và tìm điểm chung trước khi bỏ cuộc.
 
-**c2 — Document risk:** Giấy tờ đang chờ rút hồ sơ gốc, chưa sang tên được ngay. Buyer lo lắng nhưng không biết đánh giá rủi ro thế nào. Agent cần surface rõ vấn đề và escalate nếu cần.
+- **c2 — Document risk:** Giấy tờ đang chờ rút hồ sơ gốc, chưa sang tên được ngay. Buyer lo lắng nhưng không biết đánh giá rủi ro thế nào. Agent cần surface rõ vấn đề và escalate nếu cần.
 
-**c3 — Seller bypass:** Seller không muốn qua trung gian, chỉ cần số điện thoại người mua. Agent cần giải thích giá trị platform thay vì nhượng bộ.
+- **c3 — Seller bypass:** Seller không muốn qua trung gian, chỉ cần số điện thoại người mua. Agent cần giải thích giá trị platform thay vì nhượng bộ.
 
-Hypothesis chính: agent xử lý được các friction point này sớm sẽ tăng appointment booking rate so với để hai bên tự thương lượng.
+Giả thuyết chính: agent xử lý được các vấn đề này sớm sẽ tăng tỷ lệ đặt lịch hẹn so với để hai bên tự thương lượng.
 
 ---
 
@@ -58,16 +60,15 @@ process_message() — agent/agent.py
 State persisted + Events logged
 ```
 
-### Luồng xử lý mỗi message
+### Luồng xử lý mỗi process_message()
 
-1. Load conversation state từ disk.
-2. Gán index cho message mới, append vào danh sách.
-3. Log USER_MESSAGE event.
-4. Kiểm tra compact memory nếu vượt ngưỡng.
+1. Tạo mới hoặc load conversation state.
+2. Nhận tin nhắn (message) mới, append vào danh sách và log lại.
+3. Kiểm tra xem có nên compact memory không (mỗi n tin nhắn hoặc lớn hơn m tokens).
 5. Build context từ rolling summary, state hiện tại, và recent messages.
 6. Extract facts từ message mới — LLM Call 1.
 7. Merge extracted facts vào state.
-8. Decide tool nào cần gọi — LLM Call 2, dùng Gemini native function calling.
+8. Decide tool nào cần gọi — LLM Call 2.
 9. Execute tool, cập nhật state nếu cần (ví dụ: gán channel_id sau khi bridge thành công).
 10. Update next_best_action và xử lý escalation nếu có.
 11. Nếu sender là buyer thì generate reply — LLM Call 3. Nếu là seller thì bỏ qua.
@@ -78,8 +79,7 @@ State persisted + Events logged
 
 ```
 motorbike-agent/
-├── .env                          ← tạo thủ công, KHÔNG commit
-├── .env.example                  ← commit lên GitHub
+├── .env                          
 ├── .gitignore
 ├── server.py                     ← FastAPI backend
 ├── app.py                        ← Streamlit frontend
@@ -88,13 +88,13 @@ motorbike-agent/
 │
 ├── agent/
 │   ├── __init__.py
-│   ├── agent.py                  ← orchestration toàn bộ pipeline
+│   ├── agent.py                  ← Pipeline
 │   ├── llm.py                    ← Abstract LLM + GeminiLLM + OpenAILLM
 │   ├── prompt_loader.py          ← load prompt từ file
 │   ├── state.py                  ← state schema + CRUD
 │   ├── memory.py                 ← compact + build context
 │   ├── extractor.py              ← LLM call 1
-│   ├── decision.py               ← LLM call 2 (native function calling)
+│   ├── decision.py               ← LLM call 2
 │   ├── replier.py                ← LLM call 3
 │   ├── executor.py               ← execute tool calls
 │   ├── logger.py                 ← log events
@@ -129,15 +129,9 @@ motorbike-agent/
 
 ### 3 LLM calls riêng biệt mỗi message
 
-M��i message đi qua 3 LLM calls với nhiệm vụ hoàn toàn khác nhau: extract facts, decide tools, generate reply. Tách ra như vậy vì mỗi task cần kiểu reasoning khác nhau — extraction cần precision và JSON output, tool selection cần logical reasoning theo state, reply generation cần natural language và tone.
+Mỗi message đi qua 3 LLM calls với nhiệm vụ hoàn toàn khác nhau: extract facts, decide tools, generate reply. Tách ra như vậy vì mỗi task cần kiểu reasoning khác nhau — extraction cần precision và JSON output, tool selection cần logical reasoning theo state, reply generation cần natural language và tone.
 
-Gộp lại thành 1 call sẽ khó validate từng phần, khó debug khi sai, và khó improve từng bước độc lập. Trade-off là latency cao hơn, nhưng clarity quan trọng hơn ở giai đoạn này.
-
-### Gemini native function calling
-
-Tool selection dùng Gemini native function calling qua `FunctionDeclaration` thay vì prompt LLM trả về JSON rồi parse thủ công. Lý do là native function calling có schema typed, ít lỗi parsing hơn, và LLM biết chính xác tool nào có sẵn.
-
-Trade-off là tight coupling với Gemini SDK. Nhưng lợi ích loại bỏ hoàn toàn một class lỗi silent parsing đủ để chấp nhận dependency này.
+Gộp lại thành 1 call sẽ khó validate từng phần, khó debug khi sai, và khó improve từng bước độc lập. Trade-off là latency cao hơn.
 
 ### log_event được hardcode ở tầng system, không phải tool LLM gọi
 
