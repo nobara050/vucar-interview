@@ -88,12 +88,6 @@ def update_state(state: dict, extracted: dict) -> dict:
     new_questions = extracted.get("open_questions", [])
     state["open_questions"] = list(set(state["open_questions"] + new_questions))
 
-    if extracted.get("lead_stage"):
-        state["lead_stage"] = extracted["lead_stage"]
-
-    if extracted.get("next_best_action"):
-        state["next_best_action"] = extracted["next_best_action"]
-
     if extracted.get("participants"):
         for role, uid in extracted["participants"].items():
             if uid:

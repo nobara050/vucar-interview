@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # LLM Provider settings
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "") 
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "") # gemini, openai 
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
@@ -25,14 +25,14 @@ LEAD_STAGES = [
 
 # Event types for logging
 EVENT_TYPES = [
-    "USER_MESSAGE",
-    "AGENT_ACTION",
-    "TOOL_CALL",
-    "TOOL_RESULT",
-    "STATE_UPDATE",
-    "ESCALATION",
-    "HANDOFF",
-    "FEEDBACK"
+    "USER_MESSAGE", # Ghi lại tin nhắn đến từ buyer hoặc seller. Dùng để biết conversation bắt đầu từ đâu và ai nói gì.
+    "AGENT_ACTION", # Ghi lại reply mà agent trả về sau khi xử lý xong một message. Dùng để biết agent đã phản hồi gì.
+    "TOOL_CALL", # Ghi lại việc agent quyết định gọi tool nào với params gì. Dùng để debug xem agent có gọi đúng tool không.
+    "TOOL_RESULT", # Ghi lại kết quả trả về từ tool. Đi kèm với TOOL_CALL để biết tool trả về gì.
+    "STATE_UPDATE", # Ghi lại mỗi lần state được cập nhật. Dùng để xem state thay đổi như thế nào theo thời gian.
+    "ESCALATION", # Ghi lại khi agent quyết định escalate, kèm lý do. Dùng để đánh giá escalation có hợp lý không.
+    "HANDOFF", # Ghi lại khi create_chat_bridge thành công và channel được tạo. Đánh dấu thời điểm buyer và seller được kết nối.
+    "FEEDBACK" # Ghi lại outcome của conversation, có thể từ auto-detect hoặc từ nút bấm thủ công trên UI.
 ]
 
 # Paths

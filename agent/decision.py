@@ -67,6 +67,18 @@ TOOL_DECLARATIONS = [
                     required=["channel_id", "time", "place"]
                 )
             ),
+            genai.protos.FunctionDeclaration(
+                name="escalate_to_human",
+                description="Chuyển conversation cho nhân viên hỗ trợ khi có rủi ro nghiêm trọng hoặc conflict không giải quyết được",
+                parameters=genai.protos.Schema(
+                    type=genai.protos.Type.OBJECT,
+                    properties={
+                        "reason": genai.protos.Schema(type=genai.protos.Type.STRING, description="Lý do escalate"),
+                        "severity": genai.protos.Schema(type=genai.protos.Type.STRING, description="Mức độ nghiêm trọng: high | critical"),
+                    },
+                    required=["reason"]
+                )
+            ),
         ]
     )
 ]
@@ -95,11 +107,9 @@ def decide_tools(state: dict, context: str) -> tuple[dict, str]:
         text = result["text"]
         # LLM có thể trả về next_best_action trong text
         try:
-            import re
-            import json as jsonlib
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
-                parsed = jsonlib.loads(match.group())
+                parsed = json.loads(match.group())
                 next_best_action = parsed.get("next_best_action", next_best_action)
                 escalate = parsed.get("escalate", False)
                 escalate_reason = parsed.get("escalate_reason", "")

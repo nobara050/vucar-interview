@@ -6,11 +6,10 @@ import config
 
 def save_feedback(conversation_id: str, outcome: str, state: dict, notes: str = ""):
     """
-    Lưu feedback signal vào data/feedback.jsonl.
+    Lưu hoặc cập nhật feedback cho conversation_id.
+    Mỗi conversation chỉ có 1 entry, update thay vì append.
 
     outcome: "booked" | "closed" | "dropped" | "escalated" | "connected"
-    state: state snapshot tại thời điểm kết thúc
-    notes: ghi chú tùy chọn từ user
     """
     os.makedirs(config.DATA_DIR, exist_ok=True)
     path = os.path.join(config.DATA_DIR, "feedback.jsonl")
@@ -23,13 +22,25 @@ def save_feedback(conversation_id: str, outcome: str, state: dict, notes: str = 
         "last_action": state.get("next_best_action", {}).get("action"),
         "risks": state.get("risks", []),
         "constraints_filled": _count_filled(state.get("constraints", {})),
-        "tool_history": state.get("tool_history", []),
         "channel_id": state.get("channel_id"),
         "notes": notes
     }
 
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    # Load toàn bộ, thay thế entry cũ nếu cùng conversation_id
+    entries = load_feedback()
+    updated = False
+    for i, e in enumerate(entries):
+        if e.get("conversation_id") == conversation_id:
+            entries[i] = entry
+            updated = True
+            break
+
+    if not updated:
+        entries.append(entry)
+
+    with open(path, "w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
 def load_feedback() -> list:
@@ -37,7 +48,8 @@ def load_feedback() -> list:
     if not os.path.exists(path):
         return []
     with open(path, "r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f.readlines()]
+        lines = [l.strip() for l in f.readlines() if l.strip()]
+    return [json.loads(line) for line in lines]
 
 
 def auto_detect_outcome(state: dict, tool_history: list) -> str | None:
@@ -49,17 +61,16 @@ def auto_detect_outcome(state: dict, tool_history: list) -> str | None:
 
     if "book_appointment" in tool_names:
         return "booked"
-    if state.get("lead_stage") == "DROPPED":
-        return "dropped"
     if "escalate_to_human" in tool_names:
         return "escalated"
+    if state.get("lead_stage") == "DROPPED":
+        return "dropped"
     if "create_chat_bridge" in tool_names:
         return "connected"
     return None
 
 
 def _count_filled(constraints: dict) -> int:
-    """Đếm số fields constraints đã được điền."""
     count = 0
     for k, v in constraints.items():
         if v is not None and v != [] and v != "":

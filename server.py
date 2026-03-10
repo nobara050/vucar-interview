@@ -182,6 +182,7 @@ async def feedback_summary():
     if not entries:
         return {"total": 0, "outcomes": {}}
 
+    # Mỗi conversation chỉ tính 1 lần (đã đảm bảo bởi save_feedback)
     outcomes = {}
     for e in entries:
         o = e.get("outcome", "unknown")
@@ -189,9 +190,10 @@ async def feedback_summary():
 
     total = len(entries)
     return {
-        "total": total,
+        "total_conversations": total,
         "outcomes": outcomes,
         "booking_rate": round(outcomes.get("booked", 0) / total * 100, 1),
         "close_rate": round(outcomes.get("closed", 0) / total * 100, 1),
         "drop_rate": round(outcomes.get("dropped", 0) / total * 100, 1),
+        "escalation_rate": round(outcomes.get("escalated", 0) / total * 100, 1),
     }

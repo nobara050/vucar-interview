@@ -31,7 +31,10 @@ class GeminiLLM(BaseLLM):
 
     def generate(self, prompt: str) -> str:
         model = self._genai.GenerativeModel(self._model_name)
-        response = model.generate_content(prompt)
+        response = model.generate_content(
+            prompt,
+            generation_config=self._genai.types.GenerationConfig(temperature=0.2)
+        )
         return response.text.strip()
 
     def generate_with_tools(self, prompt: str, tools: list) -> dict:
@@ -43,7 +46,10 @@ class GeminiLLM(BaseLLM):
             model_name=self._model_name,
             tools=tools
         )
-        response = model.generate_content(prompt)
+        response = model.generate_content(
+            prompt,
+            generation_config=self._genai.types.GenerationConfig(temperature=0.1)
+        )
 
         tool_calls = []
         text = ""
@@ -75,7 +81,8 @@ class OpenAILLM(BaseLLM):
     def generate(self, prompt: str) -> str:
         response = self._client.chat.completions.create(
             model=config.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
         )
         return response.choices[0].message.content.strip()
 
@@ -84,7 +91,8 @@ class OpenAILLM(BaseLLM):
             model=config.LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             tools=tools,
-            tool_choice="auto"
+            tool_choice="auto",
+            temperature=0.1
         )
         message = response.choices[0].message
         tool_calls = []

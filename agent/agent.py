@@ -1,4 +1,3 @@
-import json
 import copy
 from datetime import datetime, timezone
 from agent.state import load_state, save_state, update_state
@@ -89,9 +88,7 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
     #    Chạy với cả buyer lẫn seller để update state đúng
     # =========================
     decision, decision_prompt = decide_tools(state, context)
-    # Serialize decision sang dict thuần để tránh lỗi deepcopy với Gemini protobuf objects
-    decision_serializable = json.loads(json.dumps(decision, default=str))
-    add_step("Decide Tools", {"prompt": decision_prompt, "decision": decision_serializable})
+    add_step("Decide Tools", {"prompt": decision_prompt, "decision": decision})
 
     # =========================
     # 7. Execute tool calls
@@ -117,22 +114,18 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
                 })
 
     # =========================
-    # 8. Update next best action
+    # 8. Update next best action + handle escalation
     # =========================
     if decision.get("next_best_action"):
         state["next_best_action"] = decision["next_best_action"]
-        add_step("Next Best Action", {"next_best_action": state["next_best_action"]})
 
-    # =========================
-    # 9. Handle escalation
-    # =========================
     if decision.get("escalate"):
         state["lead_stage"] = "DROPPED"
         log_event(conversation_id, "ESCALATION", {"reason": decision.get("escalate_reason", "")})
         add_step("Escalation Triggered", {"reason": decision.get("escalate_reason", "")})
 
     # =========================
-    # 10. Generate reply (LLM call 3)
+    # 9. Generate reply (LLM call 3)
     #     Chỉ reply khi sender là buyer
     #     Seller chỉ cung cấp thông tin, agent không cần reply lại
     # =========================
@@ -144,7 +137,7 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
         add_step("Skip Reply", {"reason": "sender là seller, agent không reply"})
 
     # =========================
-    # 11. Auto detect outcome + Save feedback nếu xác định được
+    # 10. Auto detect outcome + Save feedback nếu xác định được
     # =========================
     outcome = auto_detect_outcome(state, state.get("tool_history", []))
     if outcome:
@@ -153,7 +146,7 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
         add_step("Auto Feedback", {"outcome": outcome})
 
     # =========================
-    # 12. Save state
+    # 11. Save state
     # =========================
     save_state(state)
     log_event(conversation_id, "AGENT_ACTION", {"reply": reply})

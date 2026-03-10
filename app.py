@@ -194,7 +194,7 @@ with tab_feedback:
             col_a.metric("Booking rate", f"{summary.get('booking_rate', 0)}%")
             col_b.metric("Close rate", f"{summary.get('close_rate', 0)}%")
             col_c.metric("Drop rate", f"{summary.get('drop_rate', 0)}%")
-            st.caption(f"Tổng {summary['total']} conversations")
+            st.caption(f"Tổng {summary['total_conversations']} conversations")
             st.json(summary["outcomes"])
         else:
             st.info("Chưa có feedback nào.")
