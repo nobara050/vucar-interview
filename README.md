@@ -173,13 +173,9 @@ Extractor wrap JSON parsing trong try/except, trả về `{}` nếu fail. Conver
 
 Decision module expect function call nhưng có thể nhận plain text. Xử lý bằng cách parse JSON từ text để lấy `next_best_action`, fallback về CLARIFY nếu parse fail. Conversation tiếp tục nhưng không có tool nào được gọi.
 
-### deepcopy fail với Gemini protobuf objects
-
-`MapComposite` objects từ Gemini function call args không thể deep copy bằng Python standard library. Được xử lý bằng cách serialize tất cả tool call results sang plain dict ngay trong `executor.py` trước khi log hay update state.
-
 ### Location string không normalize
 
-LLM có thể expand "HCM" thành "TP.HCM" hoặc "Hồ Chí Minh" khi truyền vào `search_listings`. Mock data hiện tại đơn giản (chỉ có tên xe) nên không ảnh hưởng. Nhưng nếu thêm lại location filter, production cần normalize về dạng chuẩn trước khi compare.
+LLM có thể expand "HCM" thành "TP.HCM" hoặc "Hồ Chí Minh" khi truyền vào `search_listings`. Mock data hiện tại đơn giản (chỉ có tên xe) nên không ảnh hưởng. Nhưng nếu thêm lại location filter, production cần normalize về dạng chuẩn trước khi compare. Hoặc retrieve theo embedding.
 
 ### Context window overflow
 
@@ -375,7 +371,7 @@ lead_stage = DROPPED          → outcome = "dropped"
 
 Signal thủ công từ UI: buyer bấm nút "Deal thành công", "Đã đặt lịch", "Buyer bỏ qua", "Cần hỗ trợ".
 
-M��i conversation chỉ có một entry trong `data/feedback.jsonl`, update thay vì append khi có signal mới.
+Mỗi conversation chỉ có một entry trong `data/feedback.jsonl`, update thay vì append khi có signal mới.
 
 Quy trình cải thiện: định kỳ chạy LLM analyzer so sánh conversations thành công và thất bại → LLM đề xuất rule mới → human review → apply vào prompt thủ công → test lại trên log cũ → deploy. Đây là prompt engineering loop, không phải model training — Gemini model weights cố định, cải thiện qua prompt và few-shot examples.
 
