@@ -127,87 +127,81 @@ motorbike-agent/
 
 ## 3. Key design decisions và trade-offs
 
-### 3 LLM calls riêng biệt mỗi message
+### Tách pipeline thành 3 LLM calls độc lập
 
-Mỗi message đi qua 3 LLM calls với nhiệm vụ hoàn toàn khác nhau: extract facts, decide tools, generate reply. Tách ra như vậy vì mỗi task cần kiểu reasoning khác nhau — extraction cần precision và JSON output, tool selection cần logical reasoning theo state, reply generation cần natural language và tone.
+Một prompt làm tất cả sẽ nhanh nhưng khó scale — không biết lỗi ở đâu khi output sai, không thể optimize từng phần riêng lẻ, không thể swap model cho từng task.
 
-Gộp lại thành 1 call sẽ khó validate từng phần, khó debug khi sai, và khó improve từng bước độc lập. Trade-off là latency cao hơn.
+Tách thành 3 stages: extract facts cập nhật state, decision chọn action, generation viết reply. Mỗi stage có prompt và temperature riêng.
 
-### log_event được hardcode ở tầng system, không phải tool LLM gọi
+Trade-off là latency tăng — trong production, extraction và decision có thể chạy song song để bù lại.
 
-Đề bài liệt kê `log_event` trong danh sách tools. Tuy nhiên trong implementation này, logging được gọi trực tiếp trong code tại mỗi bước của pipeline, không phải để LLM tự quyết định log hay không.
+### Logging được hardcode, không phải tool
 
-Lý do: logging là infrastructure, không phải business logic. Nếu để LLM quyết định log, có thể bỏ sót các event quan trọng như USER_MESSAGE hay AGENT_ACTION, làm hỏng toàn bộ audit trail và feedback loop. Các tool còn lại như search, bridge, appointment là business actions có ý nghĩa với deal — LLM nên tự quyết định gọi hay không. Logging thì không.
+Nếu logging là tool LLM có thể gọi hoặc không, audit trail phụ thuộc vào quyết định của model — và model có thể bỏ qua. Mất một log USER_MESSAGE hay AGENT_ACTION là mất khả năng debug và mất data để improve sau này.
 
-### Agent chỉ gọi một tool mỗi message turn
+Logging được gọi trực tiếp tại mỗi bước, không qua LLM. Tools như search hay bridge là business actions — LLM nên tự quyết định. Logging thì không.
 
-Hiện tại mỗi message chỉ trigger tối đa một tool call. Điều này có nghĩa là `search_listings` và `get_listing_detail` phải xảy ra ở 2 turns khác nhau, thay vì tự động gọi liên tiếp.
+### Single tool call per turn và tại sao production cần ReAct
 
-Đây là trade-off có chủ đích: với giới hạn 3 ngày và scope demo, single tool call đủ để minh họa flow. Trong production, kiến trúc đúng là **ReAct loop** (Reasoning + Acting) — agent có thể reason, gọi tool, nhìn kết quả, rồi reason tiếp và gọi tool khác trong cùng một turn cho đến khi đủ thông tin để trả lời. Ví dụ: search ra xe → tự get_listing_detail → tự bridge seller luôn mà không cần buyer phải nhắn thêm.
+Mỗi turn hiện tại chỉ execute một tool. Kiến trúc đúng cho production là **ReAct loop**: reason → gọi tool → quan sát kết quả → reason tiếp, lặp lại đến khi đủ thông tin thì reply. Với ReAct, một message có thể trigger chuỗi search → get detail → bridge seller trong một turn mà buyer không cần nhắn thêm.
 
-### Seller không nhận reply
-
-Khi seller gửi message, agent chỉ extract thông tin và update state, không reply lại. Agent chỉ nhắc đến seller khi cần xác nhận bridge hoặc appointment. Lý do là agent đại diện cho quyền lợi buyer trong hành trình tìm xe — tin nhắn của seller là input để agent hiểu thêm về xe, không phải conversation cần phản hồi.
+Pipeline hiện tại đã được thiết kế để dễ chuyển sang ReAct: bọc `decide_tools` trong vòng lặp với MAX_STEPS, inject tool result vào context sau mỗi bước trước khi reason tiếp.
 
 ### Agent phân biệt 2 chế độ theo channel_id
 
-Khi `channel_id` là null, agent đang ở chế độ tìm xe: hỏi nhu cầu, search listings, suggest kết nối. Khi `channel_id` đã có, buyer và seller đang trong cùng channel — agent chuyển sang chế độ thương lượng: không search xe khác, không tạo bridge mới, chỉ tập trung giúp hai bên đi đến deal.
+Tìm xe và thương lượng là 2 giai đoạn cần agent hành xử khác nhau hoàn toàn. `channel_id` là signal phân biệt: null thì tập trung tìm listing, có giá trị thì chuyển hoàn toàn sang mode thương lượng — không search, không bridge mới.
 
-### create_chat_bridge tự lookup seller từ listing_id
+### Storage layer tách biệt khỏi business logic
 
-Khi agent gọi `create_chat_bridge`, chỉ cần `buyer_id` và `listing_id`. Seller được tự động xác định từ listing — buyer không cần biết seller_id là gì. Điều này đúng với flow thực tế: buyer quan tâm xe nào thì platform kết nối với seller của xe đó, không phải buyer tự chọn seller.
-
-### JSON file storage
-
-State và logs lưu vào JSON files thay vì database để đơn giản hóa setup. Toàn bộ read/write được encapsulate trong `state.py` và `logger.py`, nên production có thể swap sang PostgreSQL hoặc Redis mà không cần thay đổi logic bên ngoài.
+JSON files trong demo, nhưng toàn bộ read/write được encapsulate trong `state.py` và `logger.py`. Business logic không biết storage là gì — swap sang PostgreSQL hay Redis chỉ cần thay 2 files đó.
 
 ---
 
 ## 4. Failure modes
 
-### LLM trả về text thay vì JSON trong extraction
+### LLM output không đúng format
 
-Extractor wrap JSON parsing trong try/except, trả về `{}` nếu fail. Conversation tiếp tục nhưng state không được update cho turn đó. Root cause thường là LLM thêm text giải thích xung quanh JSON. Fix đúng hơn là dùng structured output mode khi Gemini hỗ trợ.
+Extraction và tool selection đều phụ thuộc LLM trả về đúng format. Khi fail, pipeline fallback an toàn: extraction trả `{}` không update state, decision fallback về CLARIFY. Conversation không crash nhưng turn đó không có tiến triển. Fix đúng hướng là dùng structured output mode thay vì parse output thủ công.
 
-### LLM trả về text thay vì function call trong tool selection
+### State drift sau nhiều turns
 
-Decision module expect function call nhưng có thể nhận plain text. Xử lý bằng cách parse JSON từ text để lấy `next_best_action`, fallback về CLARIFY nếu parse fail. Conversation tiếp tục nhưng không có tool nào được gọi.
+Nếu extraction sai một lần — hiểu nhầm budget, gán sai risk — state bị nhiễm và các turns sau reason trên dữ liệu không đúng. Production cần versioned state: mỗi turn tạo snapshot mới thay vì mutate in place, để rollback được khi phát hiện drift.
 
-### Location string không normalize
+### Location ambiguity
 
-LLM có thể expand "HCM" thành "TP.HCM" hoặc "Hồ Chí Minh" khi truyền vào `search_listings`. Mock data hiện tại đơn giản (chỉ có tên xe) nên không ảnh hưởng. Nhưng nếu thêm lại location filter, production cần normalize về dạng chuẩn trước khi compare. Hoặc retrieve theo embedding.
+"HCM", "TP.HCM", "Sài Gòn" là cùng một nơi nhưng string match sẽ fail. Mock data hiện tại không có location filter nên chưa ảnh hưởng. Production cần normalize trước khi filter, hoặc chuyển sang embedding retrieval để handle semantic similarity.
 
-### Context window overflow
+### Memory loss khi compact
 
-Hai lớp bảo vệ: compact memory khi số message chưa compact vượt ngưỡng, và trim oldest recent messages nếu tổng token vẫn còn quá cao. State luôn được giữ nguyên, chỉ message history bị cắt bớt.
+Compact giữ được facts nhưng mất nuance — tone của buyer, các lần từ chối trước, thỏa thuận ngầm. Production nên xem xét memory retrieval: lưu toàn bộ turns nhưng chỉ retrieve đoạn relevant thay vì summarize toàn bộ.
 
-### State không nhất quán sau crash
+### Durability sau crash
 
-State chỉ được save sau khi toàn bộ pipeline hoàn thành. Nếu crash giữa chừng, state của turn đó bị mất nhưng state cũ vẫn intact. Production cần write-ahead log để recover được.
+State chỉ persist sau khi pipeline hoàn thành. Crash giữa chừng mất toàn bộ turn đó. Production cần write-ahead log để restart có thể tiếp tục hoặc rollback về trạng thái nhất quán.
 
 ---
 
 ## 5. Hướng cải thiện tiếp theo
 
-### Ngay sau demo
+### Validate trên data thật trước khi làm gì khác
 
-Chạy đủ 3 scenario từ `chat_history.jsonl`, thu thập log thật, tính metrics thực tế. Error analysis từ log thật sẽ chỉ ra prompt nào cần sửa trước.
+Prompt engineering dựa trên assumption sẽ dẫn đến cải thiện sai chỗ. Bước đầu tiên là chạy đủ 3 scenario, đọc log thật, và để error pattern chỉ ra đâu là điểm yếu thực sự — extraction hay decision hay generation.
 
-### Ngắn hạn
+### Tăng độ chính xác của extraction
 
-Thêm few-shot examples vào `extract_facts.txt` dựa trên log thật — đặc biệt là các phrase tiếng Việt colloquial map sang risk type cụ thể, ví dụ "chờ rút hồ sơ gốc" → `document_issue` severity high.
+Extraction là bước đầu tiên trong pipeline và là nơi lỗi lan sang các bước sau. Tiếng Việt colloquial là thách thức lớn nhất — "chờ rút hồ sơ gốc" hay "xe chưa sang tên" cần được map đúng sang risk type với severity phù hợp. Few-shot examples dựa trên log thật là cách nhanh nhất để cải thiện, không cần thay model.
 
-Thêm automated evaluation script chạy tập test cố định sau mỗi lần thay đổi prompt, để biết thay đổi nào giúp ích và thay đổi nào làm hỏng case khác.
+Song song đó cần automated eval script chạy tập test cố định sau mỗi lần thay prompt, để biết thay đổi nào giúp ích và thay đổi nào break case khác.
 
-### Trung hạn
+### Chuyển sang ReAct loop
 
-Implement **ReAct loop** thay vì single tool call per turn. Với ReAct, agent có thể: search listings → tự get_listing_detail xe buyer quan tâm → tự create_chat_bridge với seller luôn, tất cả trong một turn mà không cần buyer phải nhắn thêm nhiều bước. Đây là cải thiện UX lớn nhất có thể làm.
+Đây là cải thiện UX lớn nhất có thể làm. Hiện tại buyer cần nhắn nhiều bước để agent tìm xe, xem chi tiết, rồi kết nối seller. Với ReAct loop, toàn bộ chuỗi đó xảy ra trong một turn — agent tự reason và gọi tool liên tiếp cho đến khi đủ thông tin mới reply. Về implementation, pipeline hiện tại đã được thiết kế để dễ chuyển đổi.
 
-Thêm location normalization: map các variant như "TP.HCM", "Hồ Chí Minh", "Sài Gòn" về cùng một key trước khi filter.
+### Mở rộng hệ thống
 
-### Dài hạn
+Location normalization cần được xử lý trước khi thêm lại location filter — map các variant về cùng key, hoặc chuyển sang embedding retrieval để handle semantic similarity thay vì exact match.
 
-Swap JSON file storage sang database thật. Làm agent pipeline async để handle concurrent conversations. Xây dựng LLM analyzer tự động đọc `feedback.jsonl`, so sánh conversations thành công và thất bại, đề xuất cải thiện prompt để human review.
+Storage cần swap sang database thật khi có concurrent conversations. Pipeline cần async để không block. Feedback loop cần được tự động hóa — LLM analyzer đọc log, so sánh conversations thành công và thất bại, đề xuất rule mới để human review trước khi apply vào prompt.
 
 ---
 
@@ -265,9 +259,13 @@ Swap JSON file storage sang database thật. Làm agent pipeline async để han
 }
 ```
 
-Lead stage transitions: `DISCOVERY → MATCHING → NEGOTIATION → CLOSING → APPOINTMENT → DROPPED`.
+`lead_stage` theo dõi buyer đang ở đâu trong quy trình: `DISCOVERY → MATCHING → NEGOTIATION → CLOSING → APPOINTMENT → DROPPED`. Agent dùng stage này kết hợp với `channel_id` để quyết định chế độ hoạt động — chưa có channel thì tìm xe, đã có channel thì thương lượng.
 
-`channel_id` null nghĩa là buyer và seller chưa được kết nối. Khi có giá trị, agent chuyển sang chế độ thương lượng.
+`constraints` tích lũy dần theo conversation. Buyer không cần khai báo hết ngay từ đầu — mỗi message extraction sẽ merge thêm thông tin mới vào.
+
+`risks` là danh sách các vấn đề phát hiện được, mỗi risk có type, description và severity. Đây là input chính để agent quyết định có cần escalate không.
+
+`memory` lưu rolling summary của các turns cũ đã compact. Agent inject summary này vào context thay vì toàn bộ history, giữ context window trong giới hạn mà không mất thông tin quan trọng.
 
 ### Tool schema
 
