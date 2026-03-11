@@ -1,4 +1,3 @@
-import copy
 from datetime import datetime, timezone
 from agent.state import load_state, save_state, update_state
 from agent.memory import should_compact, compact_memory, build_context
@@ -16,10 +15,12 @@ def process_message(conversation_id: str, messages: list, new_message: dict) -> 
 
     def add_step(name: str, data: dict):
         step_counter[0] += 1
+        import json
+        safe_data = json.loads(json.dumps(data, default=str))
         debug_steps.append({
             "step": f"[{step_counter[0]}] {name}",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "data": copy.deepcopy(data)
+            "data": safe_data
         })
 
     # ==========================

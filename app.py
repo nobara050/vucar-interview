@@ -189,7 +189,7 @@ with tab_feedback:
     st.write("**Thống kê tổng hợp:**")
     try:
         summary = requests.get(f"{API_URL}/feedback/summary").json()
-        if summary["total"] > 0:
+        if summary.get("total_conversations", 0) > 0:
             col_a, col_b, col_c = st.columns(3)
             col_a.metric("Booking rate", f"{summary.get('booking_rate', 0)}%")
             col_b.metric("Close rate", f"{summary.get('close_rate', 0)}%")

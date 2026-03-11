@@ -1,4 +1,5 @@
 import json
+import re
 import google.generativeai as genai
 from agent.llm import llm_client
 from agent.prompt_loader import load_prompt
@@ -76,7 +77,7 @@ TOOL_DECLARATIONS = [
                         "time": genai.protos.Schema(type=genai.protos.Type.STRING, description="Thời gian hẹn"),
                         "place": genai.protos.Schema(type=genai.protos.Type.STRING, description="Địa điểm hẹn"),
                     },
-                    required=["channel_id", "time", "place"]
+                    required=["channel_id", "time"]
                 )
             ),
 
@@ -104,22 +105,21 @@ TOOL_DECLARATIONS = [
 # =============================================================================
 
 def decide_tools(state: dict, context: str) -> tuple[dict, str]:
-    # Load prompt template và format với context + state (chuyển state thành JSON string để dễ đọc)
+    # Load prompt template và format với context, state
     prompt_template = load_prompt("decide_tools.txt")
     prompt = prompt_template.format(
         context=context,
         state=json.dumps(state, ensure_ascii=False, indent=2)
     )
 
-    # Gọi LLM với prompt và tool declarations, nhận về text và tool_calls
+    # Gọi LLM với prompt và tool declarations
     result = llm_client.generate_with_tools(prompt, TOOL_DECLARATIONS)
 
-    # Khởi tạo giá trị mặc định cho next_best_action và escalate
+    # Parse next_best_action từ text nếu có
     next_best_action = {"action": "CLARIFY", "reason": ""}
     escalate = False
     escalate_reason = ""
 
-    # Nếu LLM trả về text, cố gắng parse next_best_action và escalate
     if result.get("text"):
         text = result["text"]
         # LLM có thể trả về next_best_action trong text
