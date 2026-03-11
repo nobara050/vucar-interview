@@ -3,39 +3,43 @@
 
 ---
 
-## Table of Contents
+## Mục lục
 
-1. [Understanding the Problem](#1-understanding-the-problem)
-2. [Architecture and Flow](#2-architecture-and-flow)
-3. [Key Design Decisions and Trade-offs](#3-key-design-decisions-and-trade-offs)
-4. [Failure Modes](#4-failure-modes)
-5. [How I Would Iterate Next](#5-how-i-would-iterate-next)
-6. [State Schema and Tool Schema](#6-state-schema-and-tool-schema)
-7. [Memory Strategy](#7-memory-strategy)
-8. [Evaluation Plan](#8-evaluation-plan)
-9. [Running Locally](#9-running-locally)
-
----
-
-## 1. Understanding the Problem
-
-A motorbike marketplace brings together buyers and sellers who often fail to close deals due to information asymmetry, price friction, and trust gaps. The agent's role is not simply to relay messages — it must actively reduce friction, surface risks early, and guide both parties toward a successful outcome.
-
-Three core failure scenarios emerge from the sample data:
-
-- **Price tension (c1):** Seller asks 32M VND, buyer's ceiling is 26M VND. Without a mediator, this conversation ends in silence. The agent must facilitate negotiation before either party disengages.
-- **Document risk (c2):** The listing has a pending title transfer. The buyer senses risk but lacks the expertise to evaluate it. The agent must surface this clearly and escalate if necessary.
-- **Seller bypass (c3):** The seller distrusts intermediaries and wants direct contact. The agent must demonstrate platform value rather than forcing compliance.
-
-The central hypothesis is that an agent maintaining structured state, detecting risk signals early, and guiding negotiation will increase appointment booking rate compared to unassisted communication.
+1. [Tìm hiểu bài toán](#1-tìm-hiểu-bài-toán)
+2. [Architecture và flow](#2-architecture-và-flow)
+3. [Key design decisions và trade-offs](#3-key-design-decisions-và-trade-offs)
+4. [Failure modes](#4-failure-modes)
+5. [Hướng cải thiện tiếp theo](#5-hướng-cải-thiện-tiếp-theo)
+6. [State schema và tool schema](#6-state-schema-và-tool-schema)
+7. [Memory strategy](#7-memory-strategy)
+8. [Evaluation plan](#8-evaluation-plan)
+9. [Chạy local](#9-chạy-local)
 
 ---
 
-## 2. Architecture and Flow
+## 1. Tìm hiểu bài toán
 
-### System Overview
+Việc mua bán xe máy online có một vấn đề cơ bản: buyer và seller thường không đi đến được thỏa thuận, không phải vì xe không phù hợp, mà vì thiếu người điều phối.
 
-The system separates concerns into two independently runnable processes: a FastAPI backend responsible for all agent logic, and a Streamlit frontend responsible for the user interface. Communication between them occurs over HTTP.
+Giá chênh nhau một chút là bỏ cuộc, giấy tờ có vấn đề nhỏ là sợ, seller không muốn qua trung gian là tự liên hệ rồi mất dấu.
+
+Agent trong project này đóng vai trò trung gian — không chỉ chuyển tin nhắn mà còn chủ động điều hướng hai bên đi đến thỏa thuận.
+
+Ba tình huống điển hình từ data mẫu:
+
+- **c1 — Price gap:** Seller muốn 32tr, buyer có tối đa 26tr. Không có ai điều phối thì conversation kết thúc trong im lặng. Agent cần giữ hai bên ở lại và tìm điểm chung trước khi bỏ cuộc.
+
+- **c2 — Document risk:** Giấy tờ đang chờ rút hồ sơ gốc, chưa sang tên được ngay. Buyer lo lắng nhưng không biết đánh giá rủi ro thế nào. Agent cần surface rõ vấn đề và escalate nếu cần.
+
+- **c3 — Seller bypass:** Seller không muốn qua trung gian, chỉ cần số điện thoại người mua. Agent cần giải thích giá trị platform thay vì nhượng bộ.
+
+Giả thuyết chính: agent xử lý được các vấn đề này sớm sẽ tăng tỷ lệ đặt lịch hẹn so với để hai bên tự thương lượng.
+
+---
+
+## 2. Architecture và flow
+
+### Tổng quan hệ thống
 
 ```
 Streamlit Frontend (app.py)
@@ -56,150 +60,163 @@ process_message() — agent/agent.py
 State persisted + Events logged
 ```
 
-### Per-Message Processing Steps
+### Luồng xử lý mỗi process_message()
 
-Each incoming message is processed through the following sequence:
+1. Tạo mới hoặc load conversation state.
+2. Nhận tin nhắn (message) mới, append vào danh sách và log lại.
+3. Kiểm tra xem có nên compact memory không (mỗi n tin nhắn hoặc lớn hơn m tokens).
+5. Build context từ rolling summary, state hiện tại, và recent messages.
+6. Extract facts từ message mới — LLM Call 1.
+7. Merge extracted facts vào state.
+8. Decide tool nào cần gọi — LLM Call 2.
+9. Execute tool, cập nhật state nếu cần (ví dụ: gán channel_id sau khi bridge thành công).
+10. Update next_best_action và xử lý escalation nếu có.
+11. Nếu sender là buyer thì generate reply — LLM Call 3. Nếu là seller thì bỏ qua.
+12. Auto-detect outcome, lưu feedback nếu xác định được.
+13. Save state, log AGENT_ACTION.
 
-1. Load the conversation state from disk.
-2. Assign a sequential index to the new message and append it to the in-memory message list.
-3. Log a USER_MESSAGE event.
-4. Check whether memory compaction is needed; if so, summarize and update the rolling summary.
-5. Build the LLM context from the rolling summary, current state, and recent messages.
-6. Call the extractor to pull structured facts from the new message (LLM Call 1).
-7. Merge extracted facts into the conversation state.
-8. Call the decision module to determine which tool, if any, to invoke (LLM Call 2, using Gemini native function calling).
-9. Execute the chosen tool and collect results.
-10. If the sender is a buyer, generate a reply using the updated state and tool results (LLM Call 3). If the sender is a seller, skip reply generation entirely — the agent only updates state.
-11. Auto-detect outcome signals and persist feedback if applicable.
-12. Save the updated state to disk and log an AGENT_ACTION event.
-
-### Repository Structure
+### Cấu trúc thư mục
 
 ```
 motorbike-agent/
-├── server.py
-├── app.py
-├── config.py
+├── .env                          
+├── .gitignore
+├── server.py                     ← FastAPI backend
+├── app.py                        ← Streamlit frontend
+├── config.py                     ← đọc từ .env
+├── README.md
+│
 ├── agent/
-│   ├── llm.py
-│   ├── prompt_loader.py
-│   ├── state.py
-│   ├── memory.py
-│   ├── extractor.py
-│   ├── decision.py
-│   ├── replier.py
-│   ├── executor.py
-│   ├── logger.py
-│   ├── feedback.py
-│   ├── agent.py
+│   ├── __init__.py
+│   ├── agent.py                  ← Pipeline
+│   ├── llm.py                    ← Abstract LLM + GeminiLLM + OpenAILLM
+│   ├── prompt_loader.py          ← load prompt từ file
+│   ├── state.py                  ← state schema + CRUD
+│   ├── memory.py                 ← compact + build context
+│   ├── extractor.py              ← LLM call 1
+│   ├── decision.py               ← LLM call 2
+│   ├── replier.py                ← LLM call 3
+│   ├── executor.py               ← execute tool calls
+│   ├── logger.py                 ← log events
+│   ├── feedback.py               ← thu thập và lưu feedback
 │   └── tools/
-│       ├── base.py
-│       ├── search.py
-│       ├── listing.py
-│       ├── bridge.py
-│       ├── appointment.py
-│       └── escalate.py
+│       ├── __init__.py           ← TOOL_REGISTRY + call_tool()
+│       ├── base.py               ← abstract BaseTool
+│       ├── search.py             ← search_listings
+│       ├── listing.py            ← get_listing_detail
+│       ├── bridge.py             ← create_chat_bridge
+│       ├── appointment.py        ← book_appointment
+│       └── escalate.py           ← escalate_to_human
+│
 ├── prompts/
 │   ├── extract_facts.txt
 │   ├── decide_tools.txt
 │   ├── generate_reply.txt
 │   └── compact_summary.txt
+│
 └── data/
-    ├── mock_data.py
-    ├── feedback.jsonl
-    ├── states/
-    └── logs/
+    ├── __init__.py
+    ├── mock_data.py              ← buyers, sellers, listings mock
+    ├── chat_history.jsonl        ← sample conversations
+    ├── feedback.jsonl            ← feedback signals (runtime)
+    ├── states/                   ← state JSON per conversation (runtime)
+    └── logs/                     ← event logs per conversation (runtime)
 ```
 
 ---
 
-## 3. Key Design Decisions and Trade-offs
+## 3. Key design decisions và trade-offs
 
-### Three LLM Calls Per Message
+### Tách pipeline thành 3 LLM calls độc lập
 
-The agent uses three separate LLM calls per message rather than one combined prompt. The first call extracts structured facts, the second decides which tool to invoke, and the third generates the reply.
+Một prompt làm tất cả sẽ nhanh nhưng khó scale — không biết lỗi ở đâu khi output sai, không thể optimize từng phần riêng lẻ, không thể swap model cho từng task.
 
-This separation exists because each task requires a fundamentally different type of reasoning. Extraction requires precision and JSON output. Tool selection requires logical reasoning about state and priorities. Reply generation requires natural language and tone awareness. Combining these into a single prompt would produce output that is harder to validate, harder to debug, and harder to improve independently.
+Tách thành 3 stages: extract facts cập nhật state, decision chọn action, generation viết reply. Mỗi stage có prompt và temperature riêng.
 
-The trade-off is additional latency per message. Given that the bottleneck is the Gemini API response time regardless, and that the clarity gained far outweighs the marginal cost, this was deemed the correct choice for this stage.
+Trade-off là latency tăng — trong production, extraction và decision có thể chạy song song để bù lại.
 
-### Gemini Native Function Calling for Tool Selection
+### Logging được hardcode, không phải tool
 
-Rather than prompting the LLM to output a JSON object and parsing it manually, the decision module uses Gemini's native function calling mechanism via `FunctionDeclaration`. This means tool schemas are declared formally with typed parameters, and the LLM selects and parameterizes tools using the API's built-in structured output mechanism.
+Nếu logging là tool LLM có thể gọi hoặc không, audit trail phụ thuộc vào quyết định của model — và model có thể bỏ qua. Mất một log USER_MESSAGE hay AGENT_ACTION là mất khả năng debug và mất data để improve sau này.
 
-The trade-off is tighter coupling to the Gemini SDK. However, the benefit of eliminating manual JSON parsing — and the class of silent errors it produces — is significant enough to justify this dependency.
+Logging được gọi trực tiếp tại mỗi bước, không qua LLM. Tools như search hay bridge là business actions — LLM nên tự quyết định. Logging thì không.
 
-### Seller Messages Do Not Trigger a Reply
+### Single tool call per turn, production cần chuyển sang ReAct
 
-When the sender is a seller, the agent extracts facts and updates state but does not generate a reply. The agent only responds to sellers in two specific situations: to request confirmation before creating a chat bridge, and to confirm appointment availability before booking.
+Mỗi turn hiện tại chỉ execute một tool. Kiến trúc đúng cho production là **ReAct loop**: reason → gọi tool → quan sát kết quả → reason tiếp, lặp lại đến khi đủ thông tin thì reply. Với ReAct, một message có thể trigger chuỗi search → get detail → bridge seller trong một turn mà buyer không cần nhắn thêm.
 
-This decision was made to prevent the agent from becoming intrusive or appearing to represent the seller's interests. The agent's role is to serve the buyer's journey; seller messages are inputs to the agent's understanding, not conversations requiring reciprocal engagement.
+Pipeline hiện tại đã được thiết kế để dễ chuyển sang ReAct: bọc `decide_tools` trong vòng lặp với MAX_STEPS, inject tool result vào context sau mỗi bước trước khi reason tiếp.
 
-### No Search on Price Gap
+### Agent phân biệt 2 chế độ theo channel_id
 
-When a price gap is detected, the agent prioritizes negotiation over immediately searching for alternative listings. Search is only triggered when the buyer explicitly requests it.
+Tìm xe và thương lượng là 2 giai đoạn cần agent hành xử khác nhau hoàn toàn. `channel_id` là signal phân biệt: null thì tập trung tìm listing, có giá trị thì chuyển hoàn toàn sang mode thương lượng — không search, không bridge mới.
 
-The reasoning is that surfacing alternative listings prematurely signals to the buyer that the current deal is unlikely to close, which reduces the chance of negotiation succeeding. An agent that abandons the current deal too early is not serving the platform's goal of closing transactions.
+### Storage layer tách biệt khỏi business logic
 
-### JSON File Storage
-
-State and logs are persisted to JSON files rather than a database. This was a deliberate trade-off to minimize setup complexity for the prototype. The interfaces for reading and writing state are fully encapsulated in `state.py`, making it straightforward to replace the file backend with PostgreSQL or Redis in production without touching any other module.
+JSON files trong demo, nhưng toàn bộ read/write được encapsulate trong `state.py` và `logger.py`. Business logic không biết storage là gì — swap sang PostgreSQL hay Redis chỉ cần thay 2 files đó.
 
 ---
 
-## 4. Failure Modes
+## 4. Failure modes
 
-### LLM Fails to Return Valid JSON from Extraction
+### LLM output không đúng format
+Extraction và tool selection đều phụ thuộc LLM trả về đúng format. Khi fail, pipeline fallback an toàn: extraction trả `{}` không update state, decision fallback về CLARIFY. Conversation không crash nhưng turn đó không có tiến triển.
 
-The extractor wraps JSON parsing in a try/except block and returns an empty dictionary on failure. The conversation continues without a state update for that message. While this degrades accuracy, it prevents a complete failure of the pipeline.
+Hướng giải quyết: dùng structured output mode thay vì parse output thủ công.
 
-The root cause is typically that the LLM adds explanatory text around the JSON. The prompt explicitly instructs the LLM to return only JSON, but this instruction is not always followed. A more robust fix would be to use structured output mode where supported.
+### Hallucination
+Có 2 dạng, cả 2 đều nguy hiểm hơn các failure mode khác vì hệ thống không biết mình đang sai — không có exception, không có fallback, pipeline chạy bình thường nhưng output sai.
 
-### Gemini Returns Text Instead of a Function Call
+**Reply bịa thông tin:** agent nói xe có giấy tờ đầy đủ hoặc quote giá trong khi tool result không trả về thông tin đó. Buyer tin và đưa ra quyết định dựa trên thông tin sai.
 
-The decision module expects a function call but may receive a plain text response when the LLM decides no tool is needed. The module handles this by attempting to parse a JSON object from the text to extract `next_best_action`, and falling back to a default CLARIFY action if parsing fails. The conversation continues, but tool execution is skipped.
+**Extraction bịa facts:** LLM tự điền budget hay brand vào state dù buyer chưa đề cập. State bị nhiễm từ đầu, các turns sau reason trên dữ liệu không có thật.
 
-### deepcopy Fails on Gemini Protobuf Objects
+Hướng giải quyết: generation prompt cần rule rõ ràng "chỉ dùng thông tin có trong tool results và state, không suy diễn". Extraction cần few-shot examples đủ để model phân biệt "buyer đã nói" vs "agent tự suy ra". Hallucination rate cần được track thủ công qua human review định kỳ.
 
-Gemini's `MapComposite` objects returned in function call arguments cannot be deep-copied by Python's standard `copy.deepcopy`. This was resolved by serializing all tool call results to plain Python dictionaries immediately after receiving them from the SDK, before any logging or state update occurs.
+### State drift sau nhiều turns
+Nếu extraction sai chỉ một lần (hiểu nhầm budget 25tr thành 35tr, gán sai risk "chờ rút hồ sơ gốc" thành low risk), state bị "nhiễm" và các turn sau reason dựa trên dữ liệu sai.
+Hướng giải quyết: production cần versioned state, mỗi turn tạo snapshot mới (immutable update), lưu history ngắn hạn để có thể rollback khi phát hiện drift.
 
-### Context Window Overflow
+### Location ambiguity
+"HCM", "TP.HCM", "Sài Gòn" là cùng một nơi nhưng string match sẽ fail. Mock data hiện tại không có location filter nên chưa ảnh hưởng, nhưng khi production thêm filter sẽ thành vấn đề lớn.
+Hướng giải quyết: production cần normalize trước khi filter, hoặc chuyển sang embedding retrieval để handle semantic similarity.
 
-Two layers of protection prevent the context from exceeding the model's token limit. The first layer is proactive compaction: when the number of uncompacted messages exceeds a threshold, the agent calls the LLM to produce a rolling summary. The second layer is reactive trimming: before injecting recent messages into the context, the memory module trims the oldest messages until the estimated token count falls within the allowed range.
+### Memory loss khi compact
+Compact giữ được facts nhưng mất tone của buyer, các lần từ chối trước, thỏa thuận ngầm. Trade-off: giữ full history tốn token, compact thì mất thông tin.
+Hướng khắc phục: chuyển sang retrieval-based memory — lưu full turns vào vector DB, chỉ retrieve đoạn relevant dựa trên current state thay vì summarize toàn bộ.
 
-### State Inconsistency After Crash
-
-State is saved to disk only after the full processing pipeline completes. If the process crashes mid-pipeline, the state on disk reflects the previous message, not the current one. The current message will be lost, but the state will remain internally consistent. Recovering from this would require a write-ahead log, which is outside the scope of this prototype.
-
----
-
-## 5. How I Would Iterate Next
-
-### Immediate Next Steps
-
-The most important immediate action is to run all three sample scenarios end-to-end, collect the resulting logs, and compute the defined metrics against real outputs. Error analysis based on actual log data will reveal which failure modes are most frequent and which prompt changes are most needed.
-
-### Short-Term Improvements
-
-The extraction prompt should include concrete few-shot examples derived from the sample data. The current prompt relies entirely on the LLM's general instruction-following ability. Adding examples of how "chờ rút hồ sơ gốc" maps to a `document_issue` risk with `severity: high` would make extraction more reliable.
-
-The decision prompt would benefit from clearer state-conditional rules. Currently the LLM reasons from general principles. Making the rules more explicit — for example, "if `risks` contains any entry with `severity: high`, the only permitted action is `escalate_to_human`" — would reduce deviation.
-
-### Medium-Term Improvements
-
-An automated evaluation pipeline that runs a fixed set of test conversations after each prompt change would enable systematic regression testing. Without this, it is difficult to know whether a prompt change improved one scenario while breaking another.
-
-The feedback loop should be extended to include a lightweight LLM-assisted analysis script that reads `data/feedback.jsonl`, groups conversations by outcome, and produces a summary of patterns associated with failures. This summary can then inform the next round of prompt revisions.
-
-### Long-Term Improvements
-
-For production deployment, the JSON file storage should be replaced with a proper database. The agent pipeline should be made asynchronous to handle concurrent conversations without blocking. The rolling summary compaction should be evaluated against alternative approaches such as selective fact pinning, where critical facts are explicitly preserved before compaction rather than relying on the summarization LLM to retain them.
+### Durability sau crash
+State chỉ persist sau khi pipeline hoàn thành. Crash giữa chừng mất toàn bộ turn đó. Production cần write-ahead log để restart có thể tiếp tục hoặc rollback về trạng thái nhất quán.
 
 ---
 
-## 6. State Schema and Tool Schema
+## 5. Hướng cải thiện tiếp theo
 
-### State Schema
+### Validate trên data thật
+
+Prompt engineering dựa trên assumption sẽ dẫn đến cải thiện sai chỗ. Cần chạy thêm các scenario, đọc log thật, và để error pattern chỉ ra đâu là điểm yếu (extraction hay decision hay generation).
+
+### Chuyển sang ReAct loop
+
+Hiện tại buyer cần nhắn nhiều bước để agent tìm xe, xem chi tiết, rồi kết nối seller. Với ReAct loop, toàn bộ chuỗi đó xảy ra trong một turn — agent tự reason và gọi tool liên tiếp cho đến khi đủ thông tin mới reply. 
+
+### Tự động hóa evaluation
+
+Thêm automated eval script chạy tập test cố định sau mỗi lần thay prompt. Tránh fix một chỗ nhưng hỏng nhiều case khác.
+
+### Location normalization
+
+Location normalization cần được xử lý trước khi thêm location filter, map các variant về cùng key, hoặc chuyển sang embedding retrieval để xử lý semantic similarity thay vì exact match.
+
+### Scale hệ thống
+
+Storage cần swap sang database thật khi có concurrent conversations. Feedback loop cần tự động hóa, so sánh conversations thành công và thất bại, đề xuất rule mới để human review trước khi apply vào prompt.
+
+---
+
+## 6. State schema và tool schema
+
+### State schema
 
 ```json
 {
@@ -221,28 +238,27 @@ For production deployment, the JSON file storage should be replaced with a prope
     "brands": ["Honda", "Yamaha"],
     "year_from": 2020,
     "odo_max": null,
-    "keywords": ["tay ga", "xe đẹp"]
+    "keywords": ["tay ga"]
   },
   "listing_context": {
     "listing_id": "L001",
     "price": 32000000,
     "key_attributes": {
       "name": "Honda Air Blade 2021",
-      "odo": 19000,
       "condition": "zin, giữ kỹ"
     }
   },
   "risks": [
     {
       "type": "price_gap",
-      "description": "Seller asking 32M, buyer ceiling 26M",
+      "description": "Seller 32tr, buyer ceiling 26tr",
       "severity": "high"
     }
   ],
   "open_questions": [],
   "next_best_action": {
     "action": "NEGOTIATE",
-    "reason": "Price gap of 6M exists; negotiation not yet attempted"
+    "reason": "Price gap 6tr, chưa thương lượng lần nào"
   },
   "tool_history": [],
   "memory": {
@@ -252,165 +268,185 @@ For production deployment, the JSON file storage should be replaced with a prope
 }
 ```
 
-Lead stage transitions follow the path: `DISCOVERY → MATCHING → NEGOTIATION → CLOSING → APPOINTMENT → DROPPED`.
+- `lead_stage` theo dõi buyer đang ở đâu trong quy trình: `DISCOVERY → MATCHING → NEGOTIATION → CLOSING → APPOINTMENT → DROPPED`. Agent dùng stage này kết hợp với `channel_id` để quyết định chế độ hoạt động — chưa có channel thì tìm xe, đã có channel thì thương lượng.
 
-### Tool Schema
+- `constraints` tích lũy dần theo conversation. Buyer không cần khai báo hết ngay từ đầu — mỗi message extraction sẽ merge thêm thông tin mới vào.
+
+- `risks` là danh sách các vấn đề phát hiện được, mỗi risk có type, description và severity. Đây là input chính để agent quyết định có cần escalate không.
+
+- `memory` lưu rolling summary của các turns cũ đã compact. Agent inject summary này vào context thay vì toàn bộ history, giữ context window trong giới hạn mà không mất thông tin quan trọng.
+
+### Tool schema
 
 ```
-search_listings(
-    price_max: number,
-    price_min: number,
-    brands: string[],
-    year_from: number,
-    location: string,
-    odo_max: number
-) → { listings: Listing[] }
+search_listings(brands, keywords)
+  → Tìm xe theo tên hoặc hãng
 
-get_listing_detail(
-    listing_id: string  [required]
-) → { listing_id, key_attributes, seller }
+get_listing_detail(listing_id)
+  → Lấy thông tin chi tiết một xe, kèm thông tin seller
 
-create_chat_bridge(
-    buyer_id: string    [required],
-    listing_id: string  [required],
-    seller_id: string
-) → { channel_id, buyer_id, seller_id, listing_id, status, created_at }
+create_chat_bridge(buyer_id, listing_id)
+  → Kết nối buyer với seller của listing đó
+  → Tự động lookup seller_id từ listing_id
+  → Trả về channel_id
 
-book_appointment(
-    channel_id: string  [required],
-    time: string        [required],
-    place: string       [required]
-) → { booking_id, channel_id, time, place, status }
+book_appointment(channel_id, time, place)
+  → Đặt lịch hẹn xem xe
+  → Yêu cầu đã có channel_id
 
-escalate_to_human(
-    reason: string      [required],
-    severity: string
-) → { status, reason, severity, message }
+escalate_to_human(reason, severity)
+  → Chuyển conversation cho nhân viên
+  → Cập nhật lead_stage → DROPPED
 ```
 
-All tools are mocked in this prototype. In production, each would correspond to an internal API endpoint. The agent determines when and why to call each tool through Gemini native function calling, not through hardcoded logic.
+Tất cả tools là mock trong prototype này. Agent tự quyết định gọi tool nào, không hardcode logic.
 
 ---
 
-## 7. Memory Strategy
+## 7. Memory strategy
 
-The system maintains three distinct layers of memory, each serving a different purpose.
+Hệ thống có 3 tầng memory riêng biệt, mỗi tầng phục vụ mục đích khác nhau.
 
-### Layer 1: Raw Logs
+**Tầng 1 — Raw logs** (`data/logs/{id}.jsonl`): append-only, không bao giờ sửa hay xóa. Ghi lại toàn bộ events: USER_MESSAGE, AGENT_ACTION, TOOL_CALL, TOOL_RESULT, STATE_UPDATE, ESCALATION, HANDOFF, FEEDBACK. Dùng cho audit và error analysis. Không inject vào LLM.
 
-All events are appended to `data/logs/{conversation_id}.jsonl` and are never modified or deleted. The event types logged are USER_MESSAGE, AGENT_ACTION, TOOL_CALL, TOOL_RESULT, STATE_UPDATE, ESCALATION, HANDOFF, and FEEDBACK. This layer serves as the audit trail and is the primary data source for error analysis and future training data. It is never injected into the LLM context.
+**Tầng 2 — Structured state** (`data/states/{id}.json`): được update sau mỗi message, chỉ lưu facts đã extract, không lưu raw text. Đây là nguồn thông tin chính để agent ra quyết định.
 
-### Layer 2: Structured State
+**Tầng 3 — Rolling summary** (`state.memory.summary`): LLM tóm tắt 3-5 câu, được trigger khi vượt 4 messages chưa compact hoặc 1500 tokens. Thay thế history cũ trong context.
 
-Extracted facts are merged into the conversation state after each message and persisted to `data/states/{conversation_id}.json`. Only structured, validated information is stored here — raw message text is not. This layer is injected into every LLM call as a compact representation of what the agent knows about the conversation.
+Context inject vào mỗi LLM call theo thứ tự:
 
-### Layer 3: Rolling Summary
+```
+1. Rolling summary   → thay thế toàn bộ history trước đó
+2. Structured state  → constraints, channel_id, risks, listing, next_best_action
+3. Recent messages   → chỉ những tin có index > last_compacted_index
+```
 
-When the number of uncompacted messages exceeds four, or when the estimated token count of recent messages exceeds 1,500, the agent calls the LLM to produce a 3–5 sentence summary of the messages since the last compaction. This summary is combined with any existing summary and stored in `state.memory.summary`. The `last_compacted_index` is updated accordingly.
-
-### Context Construction
-
-Each LLM call receives context assembled in the following order:
-
-1. The rolling summary, which replaces the full message history prior to `last_compacted_index`.
-2. The current structured state, including constraints, listing context, risks, and next best action.
-3. Recent messages, defined as those with an index greater than `last_compacted_index`.
-
-If the total estimated token count exceeds the allowed limit, the oldest recent messages are trimmed first, preserving the most recent context.
+Nếu vẫn vượt token limit sau khi build context, trim oldest recent messages, giữ lại tin mới nhất.
 
 ---
 
-## 8. Evaluation Plan
+## 8. Evaluation plan
 
-### Problem Statement
+### Problem statement
 
-Success is defined as a completed deal: buyer and seller reach an agreement and conduct the transaction. The primary measurable proxy for success in this prototype is appointment booking rate, as it represents the last verifiable step before the transaction leaves the platform.
+Mục tiêu của hệ thống là tăng tỷ lệ giao dịch thành công trên marketplace — buyer và seller gặp nhau, kiểm tra xe, và chốt deal. Tuy nhiên "deal thành công" không thể đo được tự động vì transaction cuối cùng xảy ra ngoài platform.
 
-The central hypothesis is that an agent that detects risk signals early, facilitates negotiation rather than abandoning it, and guides both parties through structured stages will produce a higher appointment booking rate than unassisted communication.
+Proxy measurable được chọn là `book_appointment` — thời điểm hai bên đồng ý gặp nhau. Đây là bước cuối cùng agent có thể verify trước khi conversation rời khỏi hệ thống, và là signal mạnh nhất cho thấy deal có khả năng cao sẽ xảy ra.
+
+Hypothesis: các friction point (như price gap và document risk) là nguyên nhân chính khiến buyer drop khỏi conversation trước khi đến được bước appointment. Agent phát hiện sớm và gợi ý hướng xử lý (ví dụ nhắc buyer thương lượng thay vì bỏ cuộc, cảnh báo document risk trước khi buyer phát hiện muộn) giúp hai bên ở lại conversation đủ lâu để tự đi đến thỏa thuận và book appointment.
+
+Hypothesis này có thể được validate bằng cách so sánh `booking_rate` giữa conversations có price gap được xử lý đúng vs conversations bị drop sớm, dựa trên data trong `feedback.jsonl` và event log.
 
 ### Metrics
 
-The following metrics can be computed automatically from event logs:
+Tính tự động từ log:
 
-| Metric | Definition |
+| Metric | Cách tính |
 |---|---|
-| Appointment booking rate | Conversations containing a successful `book_appointment` call divided by total conversations |
-| Match success rate | Conversations where `search_listings` returned at least one result divided by total conversations that reached the MATCHING stage |
-| Escalation rate | Conversations containing an `escalate_to_human` call divided by total conversations |
-| Next-action correctness | Conversations where `next_best_action` matches the tool called in the following step divided by total tool-calling steps |
-| Slot coverage | Number of non-null constraint fields after the first three messages divided by total constraint fields |
-| Time to first match | Timestamp of first `search_listings` call minus timestamp of first message, in seconds |
-| Drop-off rate | Conversations where `create_chat_bridge` was called but `book_appointment` was never called divided by total bridged conversations |
+| Appointment booking rate | Conversations có `book_appointment` thành công / tổng |
+| Match success rate | Conversations có `search_listings` trả kết quả / tổng conversations đến MATCHING stage |
+| Escalation rate | Conversations có `escalate_to_human` / tổng |
+| Slot coverage | Fields constraints không null sau 3 messages đầu / tổng fields |
+| Drop-off rate | Conversations có `create_chat_bridge` nhưng không có `book_appointment` / tổng bridged |
 
-The following metrics require human review:
+Cần human review:
 
-- **Hallucination rate:** The proportion of agent replies that contain factual claims not supported by the conversation context or tool results.
-- **Policy violations:** The proportion of replies where the agent suggested alternative listings during an active negotiation, or replied to a seller when not appropriate.
+- **Hallucination rate:** reply có bịa thông tin không có trong context hoặc tool results không.
+- **Policy violations:** agent có search xe khác khi đang thương lượng không, có reply seller khi không cần không.
 
-### Error Analysis
+### Error analysis
 
-**Scenario c1 — Price gap, wrong action taken**
+**c1 — Price gap, wrong action**
 
-The most likely failure is that the agent calls `search_listings` immediately upon detecting a price gap, rather than initiating negotiation. The signal that triggers the wrong action is the presence of a `price_gap` risk combined with a low `budget_max`. The signal that is missing is the absence of any prior negotiation attempt recorded in the tool history. The fix is to add an explicit rule to the decision prompt stating that `search_listings` is only permitted if `tool_history` contains a prior NEGOTIATE action that did not resolve the gap, or if the buyer has explicitly requested alternative listings.
+- Lỗi: agent gọi `search_listings` khi phát hiện price gap thay vì NEGOTIATE, hoặc đã kết nối với seller rồi vẫn tiếp tục search xe khác.
 
-**Scenario c2 — Document risk, missing escalation**
+- Nguyên nhân: `decide_tools` không kiểm tra `channel_id` trước khi quyết định action. Khi có price gap, agent nhận diện được "buyer chưa tìm được xe phù hợp" nhưng bỏ qua signal "đã có kết nối rồi" — dẫn đến chọn SEARCH thay vì NEGOTIATE. Đây là lỗi thiếu context awareness.
 
-The most likely failure is that the agent does not escalate despite a serious document issue. The extraction step may not classify "chờ rút hồ sơ gốc" as a `document_issue` with `severity: high` because the phrase is colloquial and not covered by the prompt's examples. The fix is to add few-shot examples of Vietnamese phrases that map to each risk type and severity level.
+- Fix: thêm hard rule trong `decide_tools.txt` — `search_listings` chỉ được gọi khi `channel_id` là null. Khi đã có channel, agent chỉ được chọn giữa NEGOTIATE, BOOK, DETAIL, hoặc ESCALATE chỉ gọi tool search khi buyer yêu cầu.
 
-**Scenario c3 — Seller bypass, weak response**
+**c2 — Document risk, thiếu escalation**
 
-The most likely failure is that the agent provides a generic acknowledgment rather than a substantive explanation of platform value. The signal being missed is that `seller_bypass` should trigger a HANDOFF action with a specific script, not a generic CLARIFY response. The fix is to add explicit handling for the `seller_bypass` risk type in the reply generation prompt, with a concrete example of what the agent should say.
+- Giả thuyết: agent không escalate dù risk nghiêm trọng, tiếp tục conversation bình thường.
 
-### Feedback Loop
+- Nguyên nhân có thể xảy ra: extraction không nhận diện được các phrase tiếng Việt mô tả vấn đề giấy tờ. "Chờ rút hồ sơ gốc", "đang làm thủ tục", "chưa sang tên được" — nếu những phrase này không có trong few-shot examples, LLM có thể map sai sang severity thấp hoặc bỏ qua hoàn toàn. Khi state thiếu risk, decision không có đủ signal để escalate. Đây là lỗi dây chuyền tiềm ẩn: extraction miss → state thiếu risk → decision không escalate → reply không cảnh báo buyer. Chưa observe được trong demo nhưng khả năng cao sẽ xuất hiện khi có thêm variant phrase từ user thật.
 
-Outcome signals are collected from two sources. The first is automatic detection from the event log: a successful `book_appointment` call sets outcome to "booked", a call to `escalate_to_human` sets it to "escalated", and a transition to lead stage DROPPED sets it to "dropped". The second is manual input from the UI, where the buyer can indicate whether the deal succeeded or was abandoned.
+- Fix dự phòng: thêm few-shot examples vào `extract_facts.txt` với các phrase tiếng Việt cụ thể mapped sang risk type và severity.
 
-Each feedback entry stored in `data/feedback.jsonl` contains the conversation ID, outcome, lead stage at the time of outcome, last recorded action, list of active risks, number of constraint fields filled, and any notes provided by the user.
+**c3 — Seller bypass, reply yếu**
 
-This data is used to improve the agent through a human-in-the-loop prompt engineering cycle. Periodically, an analysis script submits a batch of failed conversations to the LLM alongside successful ones and asks it to identify differentiating patterns. A human reviewer evaluates the suggested prompt changes, applies them manually, and validates the changes against the existing log data before deploying. This process is explicitly not automated model training — the Gemini model weights are fixed, and all improvement occurs through prompt revision and few-shot example augmentation.
+- Lỗi: seller yêu cầu liên hệ trực tiếp ngoài platform, agent trả lời chung chung thay vì giữ conversation trong hệ thống.
+
+- Nguyên nhân: `seller_bypass` được extract vào risks nhưng `generate_reply` không có handling cụ thể cho case này. Agent nhận diện được risk nhưng không biết phải làm gì với nó — reply fallback về tone chung chung thay vì giải thích tại sao buyer nên ở lại platform. Đây là lỗi thiếu few-shot example cho một scenario quan trọng, không phải lỗi logic.
+
+- Fix: thêm few-shot.
 
 ---
 
-## 9. Running Locally
+### Feedback loop
 
-### Requirements
+Hệ thống cải thiện qua vòng lặp human-in-the-loop: thu thập outcome thật, phân tích pattern, apply cải thiện vào prompt, chạy lại eval để confirm.
+
+**1. Thu thập outcome signals**
+
+Mỗi conversation kết thúc với một trong các outcome: `booked`, `closed`, `dropped`, `escalated`. Signal đến từ 2 nguồn — auto-detect từ tool history (ví dụ `book_appointment` thành công → `booked`), và manual từ nút bấm trên UI khi human xác nhận kết quả thật.
+
+**2. Lưu đủ context để phân tích**
+
+Mỗi entry trong `feedback.jsonl` lưu `(conversation_id, outcome, lead_stage, last_action, risks, constraints_filled, channel_id)`. Kết hợp với event log trong `data/logs/`, đủ để reconstruct lại toàn bộ quyết định agent đã đưa ra trong conversation đó.
+
+**3. Dùng data để cải thiện**
+
+\- **Few-shot examples:** so sánh conversations `dropped` vs `booked` để tìm phrase tiếng Việt nào agent đang hiểu sai — thêm vào `extract_facts.txt` để extraction nhận diện đúng hơn.
+
+\- **Tool routing:** tìm pattern trong conversations thất bại — ví dụ agent gọi `search_listings` thay vì `NEGOTIATE` khi có price gap — sửa rule trong `decide_tools.txt`.
+
+\- **Extraction và state:** nếu `constraints_filled` thấp sau nhiều turns, extraction đang bỏ sót thông tin buyer cung cấp — review lại prompt và thêm examples cho các case bị miss.
+
+---
+
+## 9. Chạy local
+
+### Cài đặt
 
 ```bash
-pip install fastapi uvicorn streamlit requests google-generativeai
+pip install fastapi uvicorn streamlit requests google-generativeai python-dotenv
 ```
 
-### Configuration
+### Cấu hình
 
-Open `config.py` and set your API key and preferred model:
+Tạo file `.env` ở thư mục gốc:
 
-```python
-LLM_PROVIDER = "gemini"
-LLM_MODEL = "gemini-2.0-flash-lite"
-LLM_API_KEY = "your_api_key_here"
+```
+LLM_API_KEY=your_api_key_here
+LLM_PROVIDER=gemini
+LLM_MODEL=your_model_name
 ```
 
-### Starting the Services
-
-Open two terminal windows. In the first, start the backend:
+### Khởi động
 
 ```bash
+# Terminal 1
 uvicorn server:app --reload --port 8000
-```
 
-In the second, start the frontend:
-
-```bash
+# Terminal 2
 streamlit run app.py
 ```
 
-The interactive API documentation is available at `http://localhost:8000/docs`.
+API docs tại `http://localhost:8000/docs`.
 
-### Sample Data
+### Demo scenarios
 
-The file `data/chat_history.jsonl` contains three sample conversations demonstrating the core scenarios. To run a scenario, select a conversation ID in the sidebar, choose a role (buyer or seller), and enter the messages from the sample file in order.
+Chạy theo 3 conversation từ `data/chat_history.jsonl`:
 
-- Conversation **c1** demonstrates price gap handling: the agent should negotiate before considering alternatives.
-- Conversation **c2** demonstrates document risk detection: the agent should warn the buyer and escalate.
-- Conversation **c3** demonstrates seller bypass: the agent should explain platform value rather than conceding.
+- **c1** — price gap: agent nên thương lượng trước, không search xe khác ngay.
+- **c2** — document risk: agent nên cảnh báo rõ ràng và escalate.
+- **c3** — seller bypass: agent nên giải thích giá trị platform.
 
-Three mock sellers (S001–S003) and three mock buyers (B001–B003) are pre-loaded. S001 owns listings L001 and L002. S002 owns listings L003 and L004. S003 has no active listings.
+Để demo nhanh flow buyer-seller mà không cần qua bước tìm xe, dùng nút **"Kết nối demo"** trên sidebar để bridge ngay với seller mặc định, sau đó chuyển role sang seller để simulate cuộc hội thoại.
+
+Mock data có 3 buyers (B001–B003), 3 sellers (S001–S002 có xe, S003 không có), và 4 listings (L001–L004).
+
+## Tác giả
+
+**Nguyễn Tiến Đạt** | Email: nguyentiendat050@gmail.com | Phone: 0374242682
+
